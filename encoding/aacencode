@@ -1,0 +1,131 @@
+#!/usr/local/bin/python
+import sys
+import json
+import os
+import logging
+import getopt
+import errno  
+from subprocess import call
+
+def shnfix(targetBase,showDir,subDir,fileType):
+  os.system("shnfix -o wav -d \"{}\" -z \"\" -b *.flac *.{} 2>/dev/null".format(os.path.join(targetBase,showDir,subDir),fileType))
+
+def fixflac(showDir,subDir):
+  shnfix(TARGET_BASE,showDir,subDir,"FLAC")
+  #os.system("shnfix -o wav -d \"{}\" -z \"\" -b *.flac *.FLAC 2>/dev/null".format(os.path.join(TARGET_BASE,showDir,subDir)))
+  for filename in os.listdir("."):
+    if (filename.upper().endswith("FLAC")):
+      basename = os.path.splitext(os.path.basename(filename))[0]
+      if (not os.path.isfile(os.path.join(TARGET_BASE,showDir,subDir,basename + ".wav"))):
+        os.system("flac -F -s -d --output-prefix=\"{}/\" \"{}\"".format(os.path.join(TARGET_BASE,showDir,subDir), filename))
+
+def fixshn(showDir,subDir):
+  shnfix(TARGET_BASE,showDir,subDir,"SHN")
+  #os.system("shnfix -o wav -d \"{}\" -z \"\" -b *.shn *.SHN 2>/dev/null".format(os.path.join(TARGET_BASE,showDir,subDir)))
+  for filename in os.listdir("."):
+    if (filename.upper().endswith("SHN")):
+      basename = os.path.splitext(os.path.basename(filename))[0]
+      if (not os.path.isfile(os.path.join(TARGET_BASE,showDir,subDir,basename + ".wav"))):
+        os.system("shorten -x \"{}\" \"{}\"".format(filename,os.path.join(TARGET_BASE,showDir,subDir,basename + ".wav")))
+
+def subdirectories(a_dir):
+  subs = [name for name in os.listdir(a_dir) if os.path.isdir(os.path.join(a_dir, name))]
+  subs.sort()
+  subs.append(".")
+  return subs
+
+def decode(info):
+  artist = concertData.get("artist", "Pink Floyd")
+  dir = info["dir"]
+  songs = info.get("songs")
+  year = info["year"]
+  album = info.get("album")
+  if album is None:
+    album = dir
+  disk = 0
+  mainidx = 0
+  os.chdir(os.path.join(PFVOL,dir))
+  for d in subdirectories("."):
+    try:
+      os.makedirs(os.path.join(TARGET_BASE,dir,d))
+    except OSError as exc:
+      if exc.errno == errno.EEXIST and os.path.isdir(TARGET_BASE):
+        pass
+      else:
+        raise
+    os.chdir(os.path.join(PFVOL,dir,d))
+    logging.info("Attempting to fix in " + os.path.join(PFVOL,dir,d))
+    flacs = filter(lambda x: x.upper().endswith("FLAC"), os.listdir("."))
+    shns = filter(lambda x: x.upper().endswith("SHN"), os.listdir("."))
+    if (len(flacs) > 0):
+      fixflac(dir,d)
+    elif (len(shns) > 0):
+      fixshn(dir,d)
+    os.chdir(os.path.join(TARGET_BASE,dir,d))
+    wavs = filter(lambda x: x.upper().endswith("WAV"), os.listdir("."))
+    logging.info("Got {} wav files.".format(len(wavs)))
+    if (len(wavs) > 0):
+      disk = disk + 1
+      os.chdir(os.path.join(TARGET_BASE,dir,d))
+      track = 0
+      ttrack = len(wavs)
+      for idx, wav in enumerate(wavs):
+        track = track + 1
+        basename = os.path.splitext(os.path.basename(wav))[0]
+        trackname = basename
+        logging.info("encoding \"{}.m4a\", track: {}/{} disc: {}".format(basename,track,ttrack,disk))
+        cmd = "afconvert \"{}\" -d aac -f m4af -u pgcm 2 -b {} -q 127 -s 0 --soundcheck-generate ".format(wav,BITRATE)
+        if (idx > 0):
+          cmd = cmd + " --gapless-before \"{}\"".format(wavs[idx-1])
+        if (idx != len(wavs) - 1):
+          cmd = cmd + " --gapless-after \"{}\"".format(wavs[idx+1])
+        cmd = cmd + " \"{}.m4a\"".format(basename)
+        if (not noencode):
+          logging.info(cmd) 
+          os.system(cmd)
+          if songs is not None:
+            trackname = songdict[songs[mainidx]] 
+          apCmd = "{} \"{}.m4a\" --artist=\"{}\" --album=\"{}\" --disk {} --tracknum {}/{} --gapless true --compilation false --stik Normal --albumArtist \"{}\" --year {} --title \"{}\" 2>/dev/null 1>&2".format(AP,basename,artist,album,disk,track,ttrack,artist,year,trackname)
+          mainidx += 1
+          logging.info(apCmd)
+          os.system(apCmd)
+          os.unlink("{}.m4a".format(basename))
+          logging.info("Unlinking {}.m4a".format(basename))
+      if (not keepwav):
+        for wav in wavs:
+          logging.info("Unlinking {}".format(wav))
+          os.unlink(wav)
+
+logging.basicConfig(level=logging.DEBUG, format='%(relativeCreated)6d %(threadName)s %(message)s')
+noencode = False
+keepwav = False
+with open("song_dictionary") as songdictF:
+  songdict = json.load(songdictF)
+opts, args = getopt.getopt(sys.argv[2:],"nw")
+for opt, arg in opts:
+  if opt == '-n':
+    noencode = True
+  elif opt == '-w':
+    keepwav = True
+
+logging.info("Using {} as info file".format(sys.argv[1]))
+logging.info("noencode: {}, keepwav: {}".format(noencode,keepwav))
+
+whereAmI = os.path.realpath(__file__)
+
+concertFn = sys.argv[1]
+with open(concertFn) as concertF:
+  concertData = json.load(concertF)
+  AP = os.path.join(os.path.dirname(whereAmI), "AtomicParsley")
+  PFVOL = os.getenv('PFVOL', "/Volumes/PinkFloyd")
+  BITRATE = os.getenv('BITRATE','320000')
+  TARGET_BASE = os.environ['HOME'] + "/Desktop/PinkFloyd"
+  try:
+    os.makedirs(TARGET_BASE)
+  except OSError as exc:
+    if exc.errno == errno.EEXIST and os.path.isdir(TARGET_BASE):
+      pass
+    else:
+      raise
+  logging.info("Going to {}.".format(PFVOL))
+  decode(concertData)
