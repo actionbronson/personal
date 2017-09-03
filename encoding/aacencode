@@ -5,28 +5,30 @@ import os
 import logging
 import getopt
 import errno  
+import re
 from subprocess import call
+
+def trackNameFromFilename(regex,gn,basename):
+  print "re.search('"+regex+"', '"+basename+"').group("+gn+")"
+  return re.search(regex, basename).groups(1)[1]
+  #return re.search(regex, basename).group(gn)
 
 def shnfix(targetBase,showDir,subDir,fileType):
   os.system("shnfix -o wav -d \"{}\" -z \"\" -b *.flac *.{} 2>/dev/null".format(os.path.join(targetBase,showDir,subDir),fileType))
 
-def fixflac(showDir,subDir):
-  shnfix(TARGET_BASE,showDir,subDir,"FLAC")
-  #os.system("shnfix -o wav -d \"{}\" -z \"\" -b *.flac *.FLAC 2>/dev/null".format(os.path.join(TARGET_BASE,showDir,subDir)))
+def fix_compressed(showDir,subDir,ext,command):
+  shnfix(TARGET_BASE,showDir,subDir,ext.upper())
   for filename in os.listdir("."):
-    if (filename.upper().endswith("FLAC")):
+    if (filename.upper().endswith(ext.upper())):
       basename = os.path.splitext(os.path.basename(filename))[0]
       if (not os.path.isfile(os.path.join(TARGET_BASE,showDir,subDir,basename + ".wav"))):
-        os.system("flac -F -s -d --output-prefix=\"{}/\" \"{}\"".format(os.path.join(TARGET_BASE,showDir,subDir), filename))
+        os.system(command(filename))
+
+def fixflac(showDir,subDir):
+    fix_compressed(showDir,subDir,"FLAC",lambda f: "flac -F -s -d --output-prefix=\"{}/\" \"{}\"".format(os.path.join(TARGET_BASE,showDir,subDir), f))
 
 def fixshn(showDir,subDir):
-  shnfix(TARGET_BASE,showDir,subDir,"SHN")
-  #os.system("shnfix -o wav -d \"{}\" -z \"\" -b *.shn *.SHN 2>/dev/null".format(os.path.join(TARGET_BASE,showDir,subDir)))
-  for filename in os.listdir("."):
-    if (filename.upper().endswith("SHN")):
-      basename = os.path.splitext(os.path.basename(filename))[0]
-      if (not os.path.isfile(os.path.join(TARGET_BASE,showDir,subDir,basename + ".wav"))):
-        os.system("shorten -x \"{}\" \"{}\"".format(filename,os.path.join(TARGET_BASE,showDir,subDir,basename + ".wav")))
+    fix_compressed(showDir,subDir,"SHN",lambda f: "shorten -x \"{}\" \"{}\"".format(f,os.path.join(TARGET_BASE,showDir,subDir,os.path.splitext(os.path.basename(f))[0] + ".wav")))
 
 def subdirectories(a_dir):
   subs = [name for name in os.listdir(a_dir) if os.path.isdir(os.path.join(a_dir, name))]
@@ -39,6 +41,9 @@ def decode(info):
   dir = info["dir"]
   songs = info.get("songs")
   year = info["year"]
+  hashlookup = info.get("hashlookup")
+  if hashlookup is None:
+    hashlookup = True
   album = info.get("album")
   if album is None:
     album = dir
@@ -74,18 +79,26 @@ def decode(info):
         basename = os.path.splitext(os.path.basename(wav))[0]
         trackname = basename
         logging.info("encoding \"{}.m4a\", track: {}/{} disc: {}".format(basename,track,ttrack,disk))
-        cmd = "afconvert \"{}\" -d aac -f m4af -u pgcm 2 -b {} -q 127 -s 0 --soundcheck-generate ".format(wav,BITRATE)
+        cmd = "afconvert \"{}\" -d aac -f m4af -u pgcm 2 -b {} -q 127 -s 0 --soundcheck-generate ".format(wav,bitrate)
         if (idx > 0):
           cmd = cmd + " --gapless-before \"{}\"".format(wavs[idx-1])
         if (idx != len(wavs) - 1):
           cmd = cmd + " --gapless-after \"{}\"".format(wavs[idx+1])
         cmd = cmd + " \"{}.m4a\"".format(basename)
+        print cmd
         if (not noencode):
           logging.info(cmd) 
           os.system(cmd)
           if songs is not None:
-            trackname = songdict[songs[mainidx]] 
-          apCmd = "{} \"{}.m4a\" --artist=\"{}\" --album=\"{}\" --disk {} --tracknum {}/{} --gapless true --compilation false --stik Normal --albumArtist \"{}\" --year {} --title \"{}\" 2>/dev/null 1>&2".format(AP,basename,artist,album,disk,track,ttrack,artist,year,trackname)
+            if hashlookup is True:
+              trackname = songdict[songs[mainidx]] 
+            else:
+              trackname = songs[mainidx]
+          elif fnRegex is not None:
+            trackname = trackNameFromFilename(fnRegex,groupNumber,basename) 
+          else:
+            trackname = "Track" + format(mainidx, '02')  
+          apCmd = "{} \"{}.m4a\" --artist=\"{}\" --album=\"{}\" --disk {} --tracknum {}/{} --gapless true --compilation false --stik Normal --albumArtist \"{}\" --year {} --title \"{}\" 2>/dev/null 1>&2".format(AP,basename,artist,album,disk,track,ttrack,artist,year,trackname.replace(u"\u2018", "'").replace(u"\u2019", "'"))
           mainidx += 1
           logging.info(apCmd)
           os.system(apCmd)
@@ -99,12 +112,19 @@ def decode(info):
 logging.basicConfig(level=logging.DEBUG, format='%(relativeCreated)6d %(threadName)s %(message)s')
 noencode = False
 keepwav = False
-with open("song_dictionary") as songdictF:
+bitrate = '320000'
+with open(os.path.join(os.path.dirname(os.path.realpath(__file__)) ,"song_dictionary")) as songdictF:
   songdict = json.load(songdictF)
-opts, args = getopt.getopt(sys.argv[2:],"nw")
+opts, args = getopt.getopt(sys.argv[2:],"nwr:g:b:")
 for opt, arg in opts:
   if opt == '-n':
     noencode = True
+  elif opt == '-r':
+    fnRegex = arg
+  elif opt == '-g':
+    groupNumber = arg
+  elif opt == '-b':
+    bitrate = arg
   elif opt == '-w':
     keepwav = True
 
@@ -118,7 +138,6 @@ with open(concertFn) as concertF:
   concertData = json.load(concertF)
   AP = os.path.join(os.path.dirname(whereAmI), "AtomicParsley")
   PFVOL = os.getenv('PFVOL', "/Volumes/PinkFloyd")
-  BITRATE = os.getenv('BITRATE','320000')
   TARGET_BASE = os.environ['HOME'] + "/Desktop/PinkFloyd"
   try:
     os.makedirs(TARGET_BASE)
