@@ -23,10 +23,10 @@ def fix_compressed(showDir,subDir,ext,command):
     if (filename.upper().endswith(ext.upper())):
       basename = os.path.splitext(os.path.basename(filename))[0]
       if (not os.path.isfile(os.path.join(args.destination,showDir,subDir,basename + ".wav"))):
-        os.system(command(filename))
+        os.system(command(filename.decode('utf-8').strip()))
 
 def fixflac(showDir,subDir):
-    fix_compressed(showDir,subDir,"FLAC",lambda f: "flac -F -s -d --output-prefix=\"{}/\" \"{}\"".format(os.path.join(args.destination,showDir,subDir), f))
+    fix_compressed(showDir,subDir,"FLAC",lambda f: "flac -F -s -d --output-prefix=\"{}/\" \"{}\"".format(os.path.join(args.destination,showDir,subDir), f.decode('utf-8').strip()))
 
 def fixshn(showDir,subDir):
     fix_compressed(showDir,subDir,"SHN",lambda f: "shorten -x \"{}\" \"{}\"".format(f,os.path.join(args.destination,showDir,subDir,os.path.splitext(os.path.basename(f))[0] + ".wav")))
