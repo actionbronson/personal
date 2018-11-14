@@ -1,4 +1,4 @@
-#!/usr/local/bin/python
+#!/usr/bin/python2.7
 import sys
 import argparse
 import json
@@ -10,6 +10,17 @@ import re
 import datetime
 import ConfigParser
 from subprocess import call
+import wave
+
+def pref_sample_rate(wav):
+  w = wave.open(wav,"rb")
+  frame_rate = w.getframerate()
+  w.close()
+  logging.info("Sample rate of {} is {}".format(wav,frame_rate))
+  if frame_rate == 96000 or frame_rate == 48000:
+    return 48000
+  else:
+    return 44100
 
 def trackNameFromFilename(regex,gn,basename):
   return re.search(regex, basename).groups(1)[1]
@@ -79,7 +90,8 @@ def decode(info):
         basename = os.path.splitext(os.path.basename(wav))[0]
         trackname = basename
         logging.info("Encoding \"{}.m4a\", track: {}/{} disc: {}".format(basename,track,ttrack,disk))
-        cmd = "afconvert \"{}\" -d aac -f m4af -u pgcm 2 -b {} -q 127 -s 0 --soundcheck-generate ".format(wav,args.bitrate)
+        sample_rate = pref_sample_rate(wav)
+        cmd = "afconvert \"{}\" -d aac@{} -f m4af -u pgcm 2 -b {} -q 127 -s 0 --soundcheck-generate ".format(wav,sample_rate,args.bitrate)
         if (idx > 0):
           cmd = cmd + " --gapless-before \"{}\"".format(wavs[idx-1])
         if (idx != lenwavs - 1):
